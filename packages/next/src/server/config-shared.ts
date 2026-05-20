@@ -547,6 +547,12 @@ export interface ExperimentalConfig {
    * Do not enable in user-facing production deployments.
    */
   exposeTestingApiInProductionBuild?: boolean
+  /**
+   * Show Request Insights in the dev tools indicator. Request Insights records
+   * the local framework spans needed to explain App Router request, render,
+   * fetch, and cache behavior without requiring an external OTEL collector.
+   */
+  requestInsights?: boolean
   extensionAlias?: Record<string, any>
   allowedRevalidateHeaderKeys?: string[]
   fetchCacheKeyPrefix?: string
@@ -2088,6 +2094,7 @@ export const defaultConfig = Object.freeze({
     fullySpecified: false,
     swcTraceProfiling: false,
     forceSwcTransforms: false,
+    requestInsights: false,
     swcPlugins: undefined,
     largePageDataBytes: 128 * 1000, // 128KB by default
     disablePostcssPresetEnv: undefined,
@@ -2248,6 +2255,7 @@ export interface NextConfigRuntime {
     | 'exposeTestingApiInProductionBuild'
     | 'supportsImmutableAssets'
     | 'instantInsights'
+    | 'requestInsights'
   > & {
     // Pick on @internal fields generates invalid .d.ts files
     /** @internal */
@@ -2317,6 +2325,7 @@ export function getNextConfigRuntime(
     exposeTestingApiInProductionBuild: ex.exposeTestingApiInProductionBuild,
     supportsImmutableAssets: ex.supportsImmutableAssets,
     instantInsights: ex.instantInsights,
+    requestInsights: ex.requestInsights,
 
     trustHostHeader: ex.trustHostHeader,
     isExperimentalCompile: ex.isExperimentalCompile,
