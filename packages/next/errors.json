@@ -1387,5 +1387,7 @@
   "1386": "Next.js encountered dynamic data during prefetching for \"%s\".\\n\\nThis will lead to slower, more expensive prefetches.\\n\\nWays to fix this:\\n  - [upgrade] Opt into Partial Prefetching by exporting \\`const prefetch = 'partial'\\` from the page or layout, or by setting \\`partialPrefetching: true\\` in next.config to opt the whole app in\\n    https://nextjs.org/docs/messages/instant-link-prefetch-partial#opt-into-partial-prefetching\\n  - [disable] Remove \\`prefetch={true}\\` from the <Link> to use the default prefetch\\n    https://nextjs.org/docs/messages/instant-link-prefetch-partial#use-the-default-prefetch\\n  - [ignore] Set \\`export const instant = false\\` to silence this warning and opt the route out of instant-navigation validation\\n    https://nextjs.org/docs/messages/instant-link-prefetch-partial#disable-validation-on-this-route",
   "1387": "The Navigation Inspector was active, but you attempted to load a blocking route. Reload the page to reset the inspector.\\n\\nTo identify why this route is blocking, refer to the Instant Navigation docs: https://preview.nextjs.org/docs/app/guides/instant-navigation",
   "1388": "Invariant: no direct app page entry found for %s",
-  "1389": "Invariant: dev virtual filesystem item was not handled by the development bundler"
+  "1389": "Invariant: dev virtual filesystem item was not handled by the development bundler",
+  "1390": "Invariant: dev server state can only be updated in dev",
+  "1391": "Invariant: no app initialized"
 }
