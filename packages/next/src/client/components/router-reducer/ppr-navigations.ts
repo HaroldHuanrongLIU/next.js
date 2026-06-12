@@ -45,7 +45,10 @@ import { FetchStrategy } from '../segment-cache/types'
 import { discoverKnownRoute } from '../segment-cache/optimistic-routes'
 import { NEXT_NAV_DEPLOYMENT_ID_HEADER } from '../../../lib/constants'
 import type { NormalizedSearch } from '../segment-cache/cache-key'
-import { routeMismatchRouterTransition } from '../router-transition'
+import {
+  beginRouterTransitionRequest,
+  routeMismatchRouterTransition,
+} from '../router-transition'
 import {
   getRenderedSearchFromVaryPath,
   type PageVaryPath,
@@ -126,6 +129,7 @@ const enum NavigationTaskExitStatus {
 
 export type NavigationRequestAccumulation = {
   separateRefreshUrls: Set<string> | null
+  prefetchedResponseEnds: Set<Promise<void>> | null
   /**
    * Set when a navigation creates new leaf segments that should be
    * scrolled to. Stays null when no new segments are created (e.g.
@@ -138,6 +142,17 @@ export type NavigationLock = NavigationLockState | null
 
 const noop = () => {}
 
+function accumulatePrefetchedResponseEnd(
+  accumulation: NavigationRequestAccumulation,
+  responseEnd: Promise<void>
+): void {
+  let responseEnds = accumulation.prefetchedResponseEnds
+  if (responseEnds === null) {
+    responseEnds = accumulation.prefetchedResponseEnds = new Set()
+  }
+  responseEnds.add(responseEnd)
+}
+
 export function createInitialCacheNodeForHydration(
   navigatedAt: number,
   initialTree: RouteTree,
@@ -149,6 +164,7 @@ export function createInitialCacheNodeForHydration(
   // HTML document.
   const accumulation: NavigationRequestAccumulation = {
     separateRefreshUrls: null,
+    prefetchedResponseEnds: null,
     scrollRef: null,
   }
   const restrictToShell = false
@@ -389,6 +405,7 @@ function updateCacheNodeOnNavigation(
       oldCacheNode !== undefined
         ? oldCacheNode.bfcacheId
         : generateBFCacheId(freshness),
+      accumulation,
       restrictToShell
     )
     newCacheNode = result.cacheNode
@@ -678,6 +695,7 @@ function createCacheNodeOnNavigation(
     // This segment was not part of the previous route, so mint a fresh
     // bfcacheId.
     generateBFCacheId(freshness),
+    accumulation,
     restrictToShell
   )
   const newCacheNode = result.cacheNode
@@ -943,6 +961,7 @@ function createCacheNodeForSegment(
   freshness: FreshnessPolicy,
   dynamicStaleAt: number,
   bfcacheId: number,
+  accumulation: NavigationRequestAccumulation,
   // Instant Navigation Testing API only — restricts segment reads to shell
   // entries. Always false outside the testing API. See navigation-testing-lock.
   restrictToShell: boolean
@@ -1097,6 +1116,9 @@ function createCacheNodeForSegment(
     restrictToShell
   )
   if (segmentEntry !== null) {
+    if (!segmentEntry.isPartial) {
+      accumulatePrefetchedResponseEnd(accumulation, segmentEntry.responseEnd)
+    }
     switch (segmentEntry.status) {
       case EntryStatus.Fulfilled: {
         // Happy path: a cache hit
@@ -1204,6 +1226,12 @@ function createCacheNodeForSegment(
         restrictToShell
       )
       if (metadataEntry !== null) {
+        if (!metadataEntry.isPartial) {
+          accumulatePrefetchedResponseEnd(
+            accumulation,
+            metadataEntry.responseEnd
+          )
+        }
         switch (metadataEntry.status) {
           case EntryStatus.Fulfilled: {
             cachedHead = metadataEntry.rsc
@@ -1378,6 +1406,22 @@ function compareSegments(
 // mismatches, we will fall back to an MPA navigation, to prevent a retry loop.
 let previousNavigationDidMismatch = false
 
+export function trackPrefetchedResponseEnds(
+  accumulation: NavigationRequestAccumulation,
+  transitionId: string | null
+): void {
+  const responseEnds = accumulation.prefetchedResponseEnds
+  if (responseEnds === null) {
+    return
+  }
+  for (const responseEnd of responseEnds) {
+    const finishRequest = beginRouterTransitionRequest(transitionId)
+    if (finishRequest !== undefined) {
+      responseEnd.then(finishRequest, finishRequest)
+    }
+  }
+}
+
 // Writes a dynamic server response into the tree created by
 // updateCacheNodeOnNavigation. All pending promises that were spawned by the
 // navigation will be resolved, either with dynamic data from the server, or
@@ -1434,7 +1478,8 @@ export function spawnDynamicRequests(
     nextUrl,
     freshnessPolicy,
     routeCacheEntry,
-    navigationLock
+    navigationLock,
+    transitionId
   )
 
   const separateRefreshUrls = accumulation.separateRefreshUrls
@@ -1487,7 +1532,8 @@ export function spawnDynamicRequests(
             nextUrl,
             freshnessPolicy,
             routeCacheEntry,
-            navigationLock
+            navigationLock,
+            transitionId
           )
         )
       }
@@ -1714,17 +1760,20 @@ async function fetchMissingDynamicData(
   nextUrl: string | null,
   freshnessPolicy: FreshnessPolicy,
   routeCacheEntry: FulfilledRouteCacheEntry | null,
-  navigationLock: NavigationLock
+  navigationLock: NavigationLock,
+  transitionId: string | null
 ): Promise<{
   exitStatus: NavigationTaskExitStatus
   url: URL
   seed: NavigationSeed | null
 }> {
   try {
+    const finishRequest = beginRouterTransitionRequest(transitionId)
     const result = await fetchServerResponse(url, {
       flightRouterState: dynamicRequestTree,
       nextUrl,
       isHmrRefresh: freshnessPolicy === FreshnessPolicy.HMRRefresh,
+      onResponseEnd: finishRequest,
     })
     if (typeof result === 'string') {
       // fetchServerResponse will return an href to indicate that the SPA
