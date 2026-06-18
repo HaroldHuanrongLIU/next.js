@@ -90,7 +90,16 @@ impl VersionedContentMap {
         .resolved_cell()
     }
 
-    /// Lists every HMR-eligible chunk under `root` with its [`VersionedContent`]
+    /// Lists every HMR-eligible chunk under `root` paired with its current
+    /// [`VersionedContent`]. See [`is_hmr_eligible_chunk`] for the eligibility
+    /// rule.
+    ///
+    /// Redirect assets are excluded: they have no file content to hash, so
+    /// [`VersionedAssetContent::version`] would bail with "not a file".
+    ///
+    /// Not a `#[turbo_tasks::function]` because the per-chunk content fetch
+    /// already participates in the task graph; callers cache the aggregate at
+    /// their own granularity.
     pub async fn hmr_chunks_in_path(
         self: Vc<Self>,
         root: &FileSystemPath,
