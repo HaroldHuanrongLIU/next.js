@@ -5,6 +5,10 @@ import fs from 'fs-extra'
 import { NextInstance } from './base'
 import * as projectEnv from '../../../scripts/reset-project.mjs'
 import { Span } from 'next/dist/trace'
+import {
+  prepareDeployableTarballs,
+  validateDeployableTarballOptions,
+} from './deployable-tarballs'
 
 export class NextDeployInstance extends NextInstance {
   private _cliOutput: string
@@ -187,13 +191,27 @@ export class NextDeployInstance extends NextInstance {
 
   public async setup(parentSpan: Span) {
     super.setup(parentSpan)
-    await super.createTestDir({ parentSpan, skipInstall: true })
-
     const existingDeployUrl = process.env.NEXT_TEST_DEPLOY_URL?.trim()
     const customDeployScriptPath =
       process.env.NEXT_TEST_DEPLOY_SCRIPT_PATH?.trim()
     const customLogsScriptPath =
       process.env.NEXT_TEST_DEPLOY_LOGS_SCRIPT_PATH?.trim()
+    const localTarballsDir = process.env.NEXT_TEST_DEPLOY_TARBALLS_DIR?.trim()
+
+    validateDeployableTarballOptions({
+      localTarballsDir,
+      existingDeployUrl,
+      nextTestVersion: process.env.NEXT_TEST_VERSION,
+    })
+
+    await super.createTestDir({ parentSpan, skipInstall: true })
+
+    if (localTarballsDir) {
+      require('console').log(
+        `Preparing local Next.js tarballs from: ${localTarballsDir}`
+      )
+      await prepareDeployableTarballs(localTarballsDir, this.testDir)
+    }
 
     // Check if using an existing deployment URL (takes priority)
     if (existingDeployUrl) {
