@@ -1,12 +1,15 @@
 import { nextTestSetup } from 'e2e-utils'
 import { retry } from '../../../lib/next-test-utils'
 
+const appShellsEnabled = !!process.env.NEXT_TEST_ENABLE_APP_SHELLS
+
 describe('instant validation causes', () => {
   const { next, skipped, isNextDev } = nextTestSetup({
     files: __dirname,
     skipDeployment: true,
     env: {
       NEXT_TEST_LOG_VALIDATION: '1',
+      NEXT_TEST_ENABLE_APP_SHELLS: appShellsEnabled ? '1' : '',
     },
   })
   if (skipped) return

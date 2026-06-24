@@ -2,6 +2,8 @@ import { nextTestSetup, type Playwright } from 'e2e-utils'
 import { retry } from 'next-test-utils'
 import * as nodePath from 'node:path'
 
+const appShellsEnabled = !!process.env.NEXT_TEST_ENABLE_APP_SHELLS
+
 describe.each([
   {
     description: 'without runtime prefetch configs',
@@ -18,6 +20,9 @@ describe.each([
   ({ fixturePath, hasRuntimePrefetch }) => {
     const { next, isTurbopack } = nextTestSetup({
       files: nodePath.join(__dirname, fixturePath),
+      env: {
+        NEXT_TEST_ENABLE_APP_SHELLS: appShellsEnabled ? '1' : '',
+      },
     })
 
     // Restart the dev server for each test to clear the in-memory cache.

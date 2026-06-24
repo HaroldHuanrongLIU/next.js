@@ -1,10 +1,15 @@
 import { isNextDev, nextTestSetup } from 'e2e-utils'
 import { waitForNoRedbox } from 'next-test-utils'
 
+const appShellsEnabled = !!process.env.NEXT_TEST_ENABLE_APP_SHELLS
+
 describe('Validations for <Link legacyBehavior>', () => {
   const { next, skipped } = nextTestSetup({
     files: __dirname,
     skipDeployment: true,
+    env: {
+      NEXT_TEST_ENABLE_APP_SHELLS: appShellsEnabled ? '1' : '',
+    },
   })
   if (skipped) return
   let previousOutputIndex

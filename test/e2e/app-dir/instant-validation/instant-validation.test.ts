@@ -18,12 +18,15 @@ import {
 } from '../../../lib/add-redbox-matchers'
 import { getDeterministicOutput } from '../cache-components-errors/utils'
 
+const appShellsEnabled = !!process.env.NEXT_TEST_ENABLE_APP_SHELLS
+
 describe('instant validation', () => {
   const { next, skipped, isNextDev, isNextStart, isTurbopack } = nextTestSetup({
     files: __dirname,
     skipStart: true,
     skipDeployment: true,
     env: {
+      NEXT_TEST_ENABLE_APP_SHELLS: appShellsEnabled ? '1' : '',
       NEXT_TEST_LOG_VALIDATION: '1',
     },
   })

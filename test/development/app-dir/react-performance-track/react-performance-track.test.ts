@@ -1,5 +1,7 @@
 import { nextTestSetup } from 'e2e-utils'
 
+const appShellsEnabled = !!process.env.NEXT_TEST_ENABLE_APP_SHELLS
+
 describe('react-performance-track', () => {
   // false is the default when visiting pages as an ordinary user.
   // true is the default when having Chrome DevTools open.
@@ -11,6 +13,9 @@ describe('react-performance-track', () => {
 
   const { next } = nextTestSetup({
     files: __dirname,
+    env: {
+      NEXT_TEST_ENABLE_APP_SHELLS: appShellsEnabled ? '1' : '',
+    },
   })
 
   it('should show setTimeout', async () => {
