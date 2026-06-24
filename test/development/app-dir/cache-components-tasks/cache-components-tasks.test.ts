@@ -2,6 +2,8 @@ import { nextTestSetup, type Playwright } from 'e2e-utils'
 import { retry } from 'next-test-utils'
 import * as nodePath from 'node:path'
 
+const partialPrefetching = !!process.env.__NEXT_PARTIAL_PREFETCHING
+
 describe.each([
   {
     description: 'without runtime prefetch configs',
@@ -18,6 +20,9 @@ describe.each([
   ({ fixturePath, hasRuntimePrefetch }) => {
     const { next, isTurbopack, isNextDev } = nextTestSetup({
       files: nodePath.join(__dirname, fixturePath),
+      env: {
+        __NEXT_PARTIAL_PREFETCHING: partialPrefetching ? 'true' : '',
+      },
     })
 
     function assertLog(

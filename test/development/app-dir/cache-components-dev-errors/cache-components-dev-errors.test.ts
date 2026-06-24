@@ -8,9 +8,14 @@ import {
 } from 'next-test-utils'
 import { outdent } from 'outdent'
 
+const partialPrefetching = !!process.env.__NEXT_PARTIAL_PREFETCHING
+
 describe('Cache Components Dev Errors', () => {
   const { isTurbopack, next, isRspack } = nextTestSetup({
     files: __dirname,
+    env: {
+      __NEXT_PARTIAL_PREFETCHING: partialPrefetching ? 'true' : '',
+    },
   })
 
   it('should show a red box error on the SSR render', async () => {

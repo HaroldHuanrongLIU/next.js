@@ -1,10 +1,15 @@
 import { isNextDev, nextTestSetup } from 'e2e-utils'
 import { waitForNoRedbox } from 'next-test-utils'
 
+const partialPrefetching = !!process.env.__NEXT_PARTIAL_PREFETCHING
+
 describe('Validations for <Link legacyBehavior>', () => {
   const { next, skipped } = nextTestSetup({
     files: __dirname,
     skipDeployment: true,
+    env: {
+      __NEXT_PARTIAL_PREFETCHING: partialPrefetching ? 'true' : '',
+    },
   })
   if (skipped) return
   let previousOutputIndex

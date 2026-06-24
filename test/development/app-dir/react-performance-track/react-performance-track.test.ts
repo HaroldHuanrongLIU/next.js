@@ -1,5 +1,7 @@
 import { nextTestSetup } from 'e2e-utils'
 
+const partialPrefetching = !!process.env.__NEXT_PARTIAL_PREFETCHING
+
 describe('react-performance-track', () => {
   // false is the default when visiting pages as an ordinary user.
   // true is the default when having Chrome DevTools open.
@@ -11,6 +13,9 @@ describe('react-performance-track', () => {
 
   const { next } = nextTestSetup({
     files: __dirname,
+    env: {
+      __NEXT_PARTIAL_PREFETCHING: partialPrefetching ? 'true' : '',
+    },
   })
 
   it('should show setTimeout', async () => {
