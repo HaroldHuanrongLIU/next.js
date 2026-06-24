@@ -506,11 +506,16 @@ impl Issue for ForbiddenTracedFileIssue {
             ]),
             StyledString::Text(rcstr!("- only use them in development, or")),
             StyledString::Line(vec![
-                StyledString::Text(rcstr!("- add ignore comments: ")),
+                StyledString::Text(rcstr!(
+                    "- add an ignore comment on the first argument of this call: "
+                )),
                 StyledString::Code(rcstr!(
                     "path.join(/*turbopackIgnore: true*/ process.cwd(), bar)"
                 )),
-                StyledString::Text(rcstr!(", or")),
+                StyledString::Text(rcstr!(
+                    " (the comment must be on the first argument of the call reported above, not \
+                     nested inside another call), or"
+                )),
             ]),
             StyledString::Text(rcstr!("- remove them.")),
         ];

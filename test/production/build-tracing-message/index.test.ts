@@ -39,7 +39,7 @@ import stripAnsi from 'strip-ansi'
        To resolve this, you can
        - make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
        - only use them in development, or
-       - add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar), or
+       - add an ignore comment on the first argument of this call: path.join(/*turbopackIgnore: true*/ process.cwd(), bar) (the comment must be on the first argument of the call reported above, not nested inside another call), or
        - remove them.
 
        Import trace:
@@ -47,6 +47,16 @@ import stripAnsi from 'strip-ansi'
            ./app/join-cwd.js
            ./app/page.js"
       `)
+      })
+
+      it('should not warn for fs calls annotated with turbopackIgnore', async () => {
+        // The build above (in the previous test) already ran; assert that none of
+        // the `turbopackIgnore`-annotated accesses in ./app/read-ignored.js produced
+        // a warning. Only ./app/join-cwd.js should warn.
+        expect(next.cliOutput).toContain(
+          'Turbopack build encountered 1 warning:'
+        )
+        expect(next.cliOutput).not.toContain('./app/read-ignored.js')
       })
     })
 
