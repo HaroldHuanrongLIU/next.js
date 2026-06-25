@@ -1,5 +1,5 @@
 import { connection } from 'next/server'
-import { Suspense, Fragment } from 'react'
+import { Suspense } from 'react'
 
 export const instant = {
   level: 'experimental-error',
@@ -15,10 +15,11 @@ export default async function Page({
   return (
     <main>
       <div>
-        <p>Params don't need a suspense boundary when runtime-prefetched:</p>
-        <SuspenseInPartialPrefetching>
-          <LinkData params={params} />
-        </SuspenseInPartialPrefetching>
+        <p>
+          Params need a suspense boundary even with "allow-runtime", because we
+          need a valid App Shell
+        </p>
+        <LinkData params={params} />
       </div>
 
       <div>
@@ -35,10 +36,6 @@ async function LinkData({ params }: { params: Promise<{ param: string }> }) {
   const { param } = await params
   return <div id="runtime-content">Param value: {param}</div>
 }
-
-const SuspenseInPartialPrefetching = process.env.__NEXT_PARTIAL_PREFETCHING
-  ? Suspense
-  : Fragment
 
 async function Dynamic() {
   await connection()
