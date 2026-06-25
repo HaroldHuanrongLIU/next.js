@@ -44,6 +44,14 @@ pub trait ModuleReference: ValueToString {
     fn source(&self) -> Option<IssueSource> {
         None
     }
+
+    /// The name of the function/call that created this reference (e.g.
+    /// `fs.readFileSync`), if any. Used to name the offending call in tracing
+    /// diagnostics so the suggested fix refers to the actual call rather than an
+    /// example.
+    fn origin_fn_name(&self) -> Option<RcStr> {
+        None
+    }
 }
 
 /// Multiple [ModuleReference]s
