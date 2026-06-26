@@ -22,8 +22,15 @@
  * API in production mode for testing purposes.
  */
 
-import { NextInstance, nextTestSetup, isNextDev } from 'e2e-utils'
+import {
+  NextInstance,
+  nextTestSetup,
+  isNextDev,
+  isNextDeploy,
+  type Playwright as NextBrowser,
+} from 'e2e-utils'
 import { instant } from '@next/playwright'
+import { assertNoConsoleErrors } from 'next-test-utils'
 import type * as Playwright from 'playwright'
 import { join } from 'node:path'
 
@@ -35,15 +42,33 @@ import { join } from 'node:path'
  * Next.js test infra wraps Playwright with its own BrowserInterface, but
  * the Instant Navigation Testing API is designed to work with native Playwright.
  */
+// The browser and full-document navigation requests for the currently running
+// test. openPage populates these so a shared afterEach can assert there were no
+// console errors (e.g. a failed hydration) and individual tests can assert that
+// releasing the instant lock resolves client-side instead of hard reloading.
+let activeBrowser: NextBrowser | undefined
+let navigationRequests: string[] = []
+
 async function openPage(
   next: NextInstance,
   url: string,
   options?: { cookies?: Array<{ name: string; value: string }> }
 ): Promise<Playwright.Page> {
   let page: Playwright.Page
-  await next.browser(url, {
+  navigationRequests = []
+  activeBrowser = await next.browser(url, {
+    // Surface uncaught page errors (e.g. a failed hydration) as console logs so
+    // assertNoConsoleErrors fails the test on them.
+    pushErrorAsConsoleLog: true,
     beforePageLoad(p) {
       page = p
+      // Record full-document navigations so tests can assert that releasing the
+      // instant lock does not trigger a hard reload.
+      p.on('request', (request) => {
+        if (request.isNavigationRequest()) {
+          navigationRequests.push(new URL(request.url()).pathname)
+        }
+      })
       if (options?.cookies) {
         const { hostname } = new URL(next.url)
         p.context().addCookies(
@@ -59,12 +84,22 @@ async function openPage(
   return page!
 }
 
+afterEach(async () => {
+  if (activeBrowser) {
+    // Console-error checking targets production minified React errors (e.g. a
+    // failed hydration on deploy, which is how the instant bootstrap regression
+    // surfaced). Development legitimately logs warnings here (such as a
+    // blocking-route prerender insight), so only assert in production.
+    if (!isNextDev) {
+      await assertNoConsoleErrors(activeBrowser)
+    }
+    activeBrowser = undefined
+  }
+})
+
 describe('instant-navigation-testing-api', () => {
   const { next } = nextTestSetup({
     files: join(__dirname, 'fixtures', 'default'),
-    // Skip deployment tests because the exposeTestingApiInProductionBuild flag
-    // doesn't exist in the production version of Next.js yet
-    skipDeployment: true,
   })
 
   it('renders prefetched loading shell instantly during navigation', async () => {
@@ -85,12 +120,16 @@ describe('instant-navigation-testing-api', () => {
       expect(await dynamicContent.count()).toBe(0)
     })
 
-    // After exiting the instant scope, dynamic content streams in
+    // After exiting the instant scope, dynamic content streams in. Releasing
+    // the lock must resolve client-side rather than hard reloading the
+    // document.
+    const navigationsAtUnlock = navigationRequests.length
     const dynamicContent = page.locator('[data-testid="dynamic-content"]')
     await dynamicContent.waitFor({ state: 'visible' })
     expect(await dynamicContent.textContent()).toContain(
       'Dynamic content loaded'
     )
+    expect(navigationRequests.length).toBe(navigationsAtUnlock)
   })
 
   it('renders runtime-prefetched content instantly during navigation', async () => {
@@ -236,13 +275,26 @@ describe('instant-navigation-testing-api', () => {
 
       // Dynamic content has not streamed in yet
       expect(await dynamicContent.count()).toBe(0)
+
+      // Wait for the instant-mode hydration to finish before releasing the
+      // lock. This mirrors real usage, where the cookie is cleared (e.g. via
+      // DevTools) after the page is interactive, so the unlock resolves
+      // client-side. Releasing before hydration completes intentionally falls
+      // back to a hard reload (see refreshOnInstantNavigationUnlock).
+      await page.waitForFunction(
+        () => (globalThis as any).__NEXT_HYDRATED === true
+      )
     })
 
-    // After exiting the instant scope, dynamic content streams in
+    // After exiting the instant scope, dynamic content streams in. Releasing
+    // the lock must resolve client-side rather than hard reloading the
+    // document.
+    const navigationsAtUnlock = navigationRequests.length
     await dynamicContent.waitFor({ state: 'visible' })
     expect(await dynamicContent.textContent()).toContain(
       'Dynamic content loaded'
     )
+    expect(navigationRequests.length).toBe(navigationsAtUnlock)
   })
 
   it('renders shell on MPA navigation via plain anchor', async () => {
@@ -1003,32 +1055,40 @@ describe('instant-navigation-testing-api', () => {
   // would be a blank document with no DevTools — leaving the user unable to
   // release the instant navigation lock. Instead the server clears the instant
   // cookie (so the next reload renders normally) and surfaces an error page.
-  it('clears the instant cookie and serves an error when the static shell is empty', async () => {
-    const res = await next.fetch('/root-blocking-page', {
-      headers: { cookie: 'next-instant-navigation-testing=[0]' },
+  //
+  // TODO: This is skipped on deploy. There, the empty prelude is served
+  // straight from the platform cache before this code runs, so the Set-Cookie
+  // that clears the instant cookie never takes effect and the user stays on a
+  // blank shell. A follow-up serves a client-side cookie-clearing recovery
+  // document so the next reload renders the route normally on deploy too.
+  if (!isNextDeploy) {
+    it('clears the instant cookie and serves an error when the static shell is empty', async () => {
+      const res = await next.fetch('/root-blocking-page', {
+        headers: { cookie: 'next-instant-navigation-testing=[0]' },
+      })
+
+      // An error response is served instead of a blank document. (The exact
+      // body differs by mode — a dev error overlay vs. a minimal production
+      // error — but the 500 status is what distinguishes it from the empty 200
+      // shell.)
+      expect(res.status).toBe(500)
+
+      // The instant cookie is cleared so the next reload renders normally.
+      const setCookie = res.headers.get('set-cookie') ?? ''
+      expect(setCookie).toContain('next-instant-navigation-testing=')
+      expect(setCookie).toMatch(/Max-Age=0|expires=/i)
+
+      // The response is a real, non-empty error response — not a blank shell.
+      const body = await res.text()
+      expect(body.length).toBeGreaterThan(0)
+      expect(body).toMatch(/error/i)
     })
-
-    // An error response is served instead of a blank document. (The exact body
-    // differs by mode — a dev error overlay vs. a minimal production error —
-    // but the 500 status is what distinguishes it from the empty 200 shell.)
-    expect(res.status).toBe(500)
-
-    // The instant cookie is cleared so the next reload renders normally.
-    const setCookie = res.headers.get('set-cookie') ?? ''
-    expect(setCookie).toContain('next-instant-navigation-testing=')
-    expect(setCookie).toMatch(/Max-Age=0|expires=/i)
-
-    // The response is a real, non-empty error response — not a blank shell.
-    const body = await res.text()
-    expect(body.length).toBeGreaterThan(0)
-    expect(body).toMatch(/error/i)
-  })
+  }
 })
 
 describe('instant-navigation-testing-api - root params', () => {
   const { next } = nextTestSetup({
     files: join(__dirname, 'fixtures', 'root-params'),
-    skipDeployment: true,
   })
 
   it('includes root param in instant shell', async () => {
@@ -1051,7 +1111,6 @@ describe('instant-navigation-testing-api - root params', () => {
 describe('instant-navigation-testing-api - partial prefetching (App Shells)', () => {
   const { next } = nextTestSetup({
     files: join(__dirname, 'fixtures', 'partial-prefetch'),
-    skipDeployment: true,
     // Skew protection (deployment-id asset versioning) is orthogonal to the
     // shell-restriction behavior under test. Disable it so the suite exercises
     // only the navigation-lock behavior.
