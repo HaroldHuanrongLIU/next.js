@@ -18,23 +18,10 @@ import {
   getSelectedLayoutSegmentPath,
 } from '../../shared/lib/segment'
 
-const useDynamicRouteParams =
-  typeof window === 'undefined'
-    ? (
-        // TODO(browser-variant): migrate to a .ts/.browser.ts split so the browser bundle drops the server branch; see scripts/generate-browser-variant-aliases.mjs
-        // ast-grep-ignore: no-typeof-window-require
-        require('../../server/app-render/dynamic-rendering') as typeof import('../../server/app-render/dynamic-rendering')
-      ).useDynamicRouteParams
-    : undefined
-
-const useDynamicSearchParams =
-  typeof window === 'undefined'
-    ? (
-        // TODO(browser-variant): migrate to a .ts/.browser.ts split so the browser bundle drops the server branch; see scripts/generate-browser-variant-aliases.mjs
-        // ast-grep-ignore: no-typeof-window-require
-        require('../../server/app-render/dynamic-rendering') as typeof import('../../server/app-render/dynamic-rendering')
-      ).useDynamicSearchParams
-    : undefined
+import {
+  useDynamicRouteParams,
+  useDynamicSearchParams,
+} from './navigation-dynamic-rendering'
 
 const {
   instrumentParamsForClientValidation,
@@ -42,9 +29,9 @@ const {
   expectCompleteParamsInClientValidation,
 } =
   typeof window === 'undefined' && process.env.__NEXT_CACHE_COMPONENTS
-    // TODO(browser-variant): migrate to a .ts/.browser.ts split so the browser bundle drops the server branch; see scripts/generate-browser-variant-aliases.mjs
-    // ast-grep-ignore: no-typeof-window-require
-    ? (require('../../server/app-render/instant-validation/instant-samples-client') as typeof import('../../server/app-render/instant-validation/instant-samples-client'))
+    ? // TODO(browser-variant): migrate to a .ts/.browser.ts split so the browser bundle drops the server branch; see scripts/generate-browser-variant-aliases.mjs
+      // ast-grep-ignore: no-typeof-window-require
+      (require('../../server/app-render/instant-validation/instant-samples-client') as typeof import('../../server/app-render/instant-validation/instant-samples-client'))
     : {}
 
 /**
