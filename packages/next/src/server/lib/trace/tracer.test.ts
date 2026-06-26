@@ -20,12 +20,18 @@ import {
 
 import { clearSpanStoreForTest, getSpanRecords } from './span-store'
 import { registerLocalSpanRecorder } from './local-span-recorder'
-import { AppRenderSpan, NodeSpan } from './constants'
+import {
+  AppRenderSpan,
+  BaseServerSpan,
+  LoadComponentsSpan,
+  NodeSpan,
+} from './constants'
 import { SpanKind, SpanStatusCode, getTracer } from './tracer'
 
 const customContextKey = createContextKey('next.tracer.test.custom-context')
 const originalLocalSpans = process.env.NEXT_OTEL_LOCAL_SPANS
 const originalDevServer = process.env.__NEXT_DEV_SERVER
+const originalRequestInsights = process.env.__NEXT_REQUEST_INSIGHTS
 
 const getter: TextMapGetter<Record<string, string | undefined>> = {
   keys: (carrier) => Object.keys(carrier),
@@ -161,6 +167,11 @@ describe('local span store sink', () => {
     } else {
       process.env.__NEXT_DEV_SERVER = originalDevServer
     }
+    if (originalRequestInsights === undefined) {
+      delete process.env.__NEXT_REQUEST_INSIGHTS
+    } else {
+      process.env.__NEXT_REQUEST_INSIGHTS = originalRequestInsights
+    }
     trace.disable()
     clearSpanStoreForTest()
   })
@@ -172,6 +183,23 @@ describe('local span store sink', () => {
 
     expect(result).toBe('result')
     expect(getSpanRecords()).toEqual([])
+  })
+
+  it('records verbose spans locally for request insights', () => {
+    delete process.env.NEXT_OTEL_LOCAL_SPANS
+    process.env.__NEXT_REQUEST_INSIGHTS = 'true'
+
+    getTracer().trace(BaseServerSpan.render, () => undefined)
+    const wrappedLoadComponents = getTracer().wrap(
+      LoadComponentsSpan.loadComponents,
+      () => undefined
+    )
+    wrappedLoadComponents()
+
+    expect(getSpanRecords()).toEqual([
+      expect.objectContaining({ name: BaseServerSpan.render }),
+      expect.objectContaining({ name: LoadComponentsSpan.loadComponents }),
+    ])
   })
 
   it('bypasses local span handling outside the dev server', () => {
@@ -214,6 +242,7 @@ describe('local span store sink', () => {
         durationMs: expect.any(Number),
         attributes: expect.objectContaining({
           'next.route': '/products/[id]',
+          'next.span.category': 'nextjs',
           'next.span_name': 'test.sync',
           'next.span_type': NodeSpan.runHandler,
         }),
@@ -230,6 +259,7 @@ describe('local span store sink', () => {
         kind: SpanKind.CLIENT,
         spanName: 'fetch GET https://example.vercel.sh/',
         attributes: {
+          'next.span.category': 'application',
           'http.url': 'https://example.vercel.sh/',
           'http.method': 'GET',
           'net.peer.name': 'example.vercel.sh',
@@ -248,6 +278,7 @@ describe('local span store sink', () => {
         attributes: expect.objectContaining({
           'next.span_name': 'fetch GET https://example.vercel.sh/',
           'next.span_type': AppRenderSpan.fetch,
+          'next.span.category': 'application',
           'http.url': 'https://example.vercel.sh/',
           'http.method': 'GET',
           'net.peer.name': 'example.vercel.sh',
@@ -422,7 +453,10 @@ describe('local span store sink', () => {
       expect(getTracer().getActiveScopeSpan()).toBe(parentSpan)
 
       const childSpan = getTracer().startSpan(AppRenderSpan.fetch, {
-        attributes: { 'next.page': 'child' },
+        attributes: {
+          'next.page': 'child',
+          'next.span.category': 'application',
+        },
       })
       childSpanId = childSpan.spanContext().spanId
       childSpan.end()
@@ -441,6 +475,9 @@ describe('local span store sink', () => {
       expect.objectContaining({
         name: NodeSpan.runHandler,
         parentSpanId: undefined,
+        attributes: expect.objectContaining({
+          'next.span.category': 'nextjs',
+        }),
       })
     )
     expect(childRecord).toEqual(
@@ -449,6 +486,9 @@ describe('local span store sink', () => {
         spanId: childSpanId,
         traceId: parentRecord?.traceId,
         parentSpanId: parentRecord?.spanId,
+        attributes: expect.objectContaining({
+          'next.span.category': 'application',
+        }),
       })
     )
   })

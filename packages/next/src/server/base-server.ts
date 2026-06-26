@@ -44,6 +44,7 @@ import type { ProxyMatcher } from '../build/analysis/get-page-static-info'
 import type { TLSSocket } from 'tls'
 import type { PathnameNormalizer } from './normalizers/request/pathname-normalizer'
 import type { InstrumentationModule } from './instrumentation/types'
+import type { Span } from 'next/dist/compiled/@opentelemetry/api'
 
 import * as path from 'path'
 import { format as formatUrl } from 'url'
@@ -84,6 +85,8 @@ import {
 import { getNextPathnameInfo } from '../shared/lib/router/utils/get-next-pathname-info'
 import {
   RSC_HEADER,
+  NEXT_HTML_REQUEST_ID_HEADER,
+  NEXT_REQUEST_ID_HEADER,
   NEXT_RSC_UNION_QUERY,
   NEXT_ROUTER_PREFETCH_HEADER,
   NEXT_ROUTER_SEGMENT_PREFETCH_HEADER,
@@ -91,6 +94,7 @@ import {
   NEXT_ROUTER_STATE_TREE_HEADER,
   NEXT_INSTANT_TEST_COOKIE,
 } from '../client/components/app-router-headers'
+import { nanoid } from 'next/dist/compiled/nanoid'
 import type {
   MatchOptions,
   RouteMatcherManager,
@@ -109,6 +113,8 @@ import {
   SpanStatusCode,
 } from './lib/trace/tracer'
 import { BaseServerSpan } from './lib/trace/constants'
+import { runWithRequestInsightsIdentity } from './lib/trace/request-insights-identity'
+import { isRequestInsightsEnabled } from './lib/trace/span-store'
 import { I18NProvider } from './lib/i18n-provider'
 import { sendResponse } from './send-response'
 import { normalizeNextQueryParam } from './web/utils'
@@ -895,86 +901,119 @@ export default abstract class Server<
     const method = req.method.toUpperCase()
     const tracer = getTracer()
 
-    return tracer.withPropagatedContext(req.headers, () => {
-      // Capture the parent span before creating the handleRequest span.
-      // When deployed with an adapter, the platform's runtime may create its
-      // own OTEL HTTP server span before Next.js runs. We propagate http.route
-      // to this parent span so APM tools (e.g. Datadog) can derive the
-      // resource name correctly.
-      const parentSpan = tracer.getActiveScopeSpan()
+    const handleRequest = () =>
+      tracer.withPropagatedContext(req.headers, () => {
+        // Capture the parent span before creating the handleRequest span.
+        // When deployed with an adapter, the platform's runtime may create its
+        // own OTEL HTTP server span before Next.js runs. We propagate http.route
+        // to this parent span so APM tools (e.g. Datadog) can derive the
+        // resource name correctly.
+        const parentSpan = tracer.getActiveScopeSpan()
 
-      return tracer.trace(
-        BaseServerSpan.handleRequest,
-        {
-          spanName: `${method}`,
-          kind: SpanKind.SERVER,
-          attributes: {
-            'http.method': method,
-            'http.target': req.url,
+        return tracer.trace(
+          BaseServerSpan.handleRequest,
+          {
+            spanName: `${method}`,
+            kind: SpanKind.SERVER,
+            attributes: {
+              'http.method': method,
+              'http.target': req.url,
+            },
           },
-        },
-        async (span) =>
-          this.handleRequestImpl(req, res, parsedUrl).finally(() => {
-            if (!span) return
+          async (span) => {
+            const request =
+              isRequestInsightsEnabled() ||
+              process.env.NEXT_OTEL_VERBOSE === '1'
+                ? tracer.trace(
+                    BaseServerSpan.handleRequestImpl,
+                    { spanName: 'handle request' },
+                    () => this.handleRequestImpl(req, res, parsedUrl)
+                  )
+                : this.handleRequestImpl(req, res, parsedUrl)
 
-            const isRSCRequest = getRequestMeta(req, 'isRSCRequest') ?? false
-            span.setAttributes({
-              'http.status_code': res.statusCode,
-              'next.rsc': isRSCRequest,
-            })
+            return request.finally(() => {
+              if (!span) return
 
-            if (res.statusCode && res.statusCode >= 500) {
-              // For 5xx status codes: SHOULD be set to 'Error' span status.
-              // x-ref: https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
-              span.setStatus({
-                code: SpanStatusCode.ERROR,
-              })
-              // For span status 'Error', SHOULD set 'error.type' attribute.
-              span.setAttribute('error.type', res.statusCode.toString())
-            }
-
-            const rootSpanAttributes = tracer.getRootSpanAttributes()
-            // We were unable to get attributes, probably OTEL is not enabled
-            if (!rootSpanAttributes) return
-
-            if (
-              rootSpanAttributes.get('next.span_type') !==
-              BaseServerSpan.handleRequest
-            ) {
-              console.warn(
-                `Unexpected root span type '${rootSpanAttributes.get(
-                  'next.span_type'
-                )}'. Please report this Next.js issue https://github.com/vercel/next.js`
-              )
-              return
-            }
-
-            const route = rootSpanAttributes.get('next.route')
-            if (route) {
-              const name = isRSCRequest
-                ? `RSC ${method} ${route}`
-                : `${method} ${route}`
-
+              const isRSCRequest = getRequestMeta(req, 'isRSCRequest') ?? false
               span.setAttributes({
-                'next.route': route,
-                'http.route': route,
-                'next.span_name': name,
+                'http.status_code': res.statusCode,
+                'next.rsc': isRSCRequest,
               })
-              span.updateName(name)
 
-              // Propagate http.route to the parent span if one exists and
-              // is different from the handleRequest span. This ensures APM
-              // tools that read attributes from the outermost span (e.g.
-              // a platform-created HTTP span) can derive the resource name.
-              if (parentSpan && parentSpan !== span) {
-                parentSpan.setAttribute('http.route', route)
+              if (res.statusCode && res.statusCode >= 500) {
+                // For 5xx status codes: SHOULD be set to 'Error' span status.
+                // x-ref: https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+                span.setStatus({
+                  code: SpanStatusCode.ERROR,
+                })
+                // For span status 'Error', SHOULD set 'error.type' attribute.
+                span.setAttribute('error.type', res.statusCode.toString())
               }
-            } else {
-              span.updateName(isRSCRequest ? `RSC ${method}` : `${method}`)
-            }
-          })
-      )
-    })
+
+              const rootSpanAttributes = tracer.getRootSpanAttributes()
+              // We were unable to get attributes, probably OTEL is not enabled
+              if (!rootSpanAttributes) return
+
+              if (
+                rootSpanAttributes.get('next.span_type') !==
+                BaseServerSpan.handleRequest
+              ) {
+                console.warn(
+                  `Unexpected root span type '${rootSpanAttributes.get(
+                    'next.span_type'
+                  )}'. Please report this Next.js issue https://github.com/vercel/next.js`
+                )
+                return
+              }
+
+              const route = rootSpanAttributes.get('next.route')
+              if (route) {
+                const name = isRSCRequest
+                  ? `RSC ${method} ${route}`
+                  : `${method} ${route}`
+
+                span.setAttributes({
+                  'next.route': route,
+                  'http.route': route,
+                  'next.span_name': name,
+                })
+                span.updateName(name)
+
+                // Propagate http.route to the parent span if one exists and
+                // is different from the handleRequest span. This ensures APM
+                // tools that read attributes from the outermost span (e.g.
+                // a platform-created HTTP span) can derive the resource name.
+                if (parentSpan && parentSpan !== span) {
+                  parentSpan.setAttribute('http.route', route)
+                }
+              } else {
+                span.updateName(isRSCRequest ? `RSC ${method}` : `${method}`)
+              }
+            })
+          }
+        )
+      })
+
+    if (!isRequestInsightsEnabled()) {
+      return handleRequest()
+    }
+
+    const requestIdHeader = req.headers[NEXT_REQUEST_ID_HEADER]
+    const requestId =
+      typeof requestIdHeader === 'string' ? requestIdHeader : nanoid()
+    const htmlRequestIdHeader = req.headers[NEXT_HTML_REQUEST_ID_HEADER]
+
+    return runWithRequestInsightsIdentity(
+      {
+        requestId,
+        htmlRequestId:
+          typeof htmlRequestIdHeader === 'string'
+            ? htmlRequestIdHeader
+            : requestId,
+        url: req.url,
+      },
+      handleRequest
+    )
   }
 
   private async handleRequestImpl(
@@ -982,6 +1021,18 @@ export default abstract class Server<
     res: ServerResponse,
     parsedUrl?: NextUrlWithParsedQuery
   ): Promise<void> {
+    const shouldTraceDetailedRequest =
+      isRequestInsightsEnabled() || process.env.NEXT_OTEL_VERBOSE === '1'
+    let requestSetupSpan = shouldTraceDetailedRequest
+      ? getTracer().startSpan(BaseServerSpan.prepareRequest, {
+          attributes: {
+            'next.span_name': 'prepare request',
+            'next.span_type': BaseServerSpan.prepareRequest,
+          },
+        })
+      : undefined
+    requestSetupSpan?.updateName('prepare request')
+
     try {
       // Wait for the matchers to be ready.
       await this.matchers.waitTillReady()
@@ -1571,7 +1622,20 @@ export default abstract class Server<
         finished = await this.normalizeAndAttachMetadata(req, res, parsedUrl)
         if (finished) return
 
-        await this.handleCatchallRenderRequest(req, res, parsedUrl)
+        requestSetupSpan?.end()
+        requestSetupSpan = undefined
+        const normalizedParsedUrl = parsedUrl
+
+        if (shouldTraceDetailedRequest) {
+          await getTracer().trace(
+            BaseServerSpan.dispatchRequest,
+            { spanName: 'dispatch request' },
+            () =>
+              this.handleCatchallRenderRequest(req, res, normalizedParsedUrl)
+          )
+        } else {
+          await this.handleCatchallRenderRequest(req, res, normalizedParsedUrl)
+        }
         return
       }
 
@@ -1610,6 +1674,8 @@ export default abstract class Server<
       }
 
       res.statusCode = 200
+      requestSetupSpan?.end()
+      requestSetupSpan = undefined
       return await this.run(req, res, parsedUrl)
     } catch (err: any) {
       if (err instanceof NoFallbackError) {
@@ -1631,6 +1697,8 @@ export default abstract class Server<
       this.logError(getProperError(err))
       res.statusCode = 500
       res.body('Internal Server Error').send()
+    } finally {
+      requestSetupSpan?.end()
     }
   }
 
@@ -1987,13 +2055,28 @@ export default abstract class Server<
     requestContext: RequestContext<ServerRequest, ServerResponse>,
     findComponentsResult: FindComponentsResult
   ): Promise<ResponsePayload | null> {
+    const detailedPhase:
+      | {
+          span: Span | undefined
+        }
+      | undefined =
+      isRequestInsightsEnabled() || process.env.NEXT_OTEL_VERBOSE === '1'
+        ? { span: undefined }
+        : undefined
+
     return getTracer().trace(
       BaseServerSpan.renderToResponseWithComponents,
-      async () =>
-        this.renderToResponseWithComponentsImpl(
-          requestContext,
-          findComponentsResult
-        )
+      async () => {
+        try {
+          return await this.renderToResponseWithComponentsImpl(
+            requestContext,
+            findComponentsResult,
+            detailedPhase
+          )
+        } finally {
+          detailedPhase?.span?.end()
+        }
+      }
     )
   }
 
@@ -2042,8 +2125,26 @@ export default abstract class Server<
       pathname,
       renderOpts: opts,
     }: RequestContext<ServerRequest, ServerResponse>,
-    { components, query }: FindComponentsResult
+    { components, query }: FindComponentsResult,
+    detailedPhase:
+      | {
+          span: Span | undefined
+        }
+      | undefined
   ): Promise<ResponsePayload | null> {
+    if (detailedPhase) {
+      detailedPhase.span = getTracer().startSpan(
+        BaseServerSpan.prepareResponseWithComponents,
+        {
+          attributes: {
+            'next.span_name': 'prepare response',
+            'next.span_type': BaseServerSpan.prepareResponseWithComponents,
+          },
+        }
+      )
+      detailedPhase.span.updateName('prepare response')
+    }
+
     if (pathname === UNDERSCORE_NOT_FOUND_ROUTE) {
       pathname = '/404'
     }
@@ -2355,10 +2456,38 @@ export default abstract class Server<
     }
 
     // use existing incrementalCache instance if available
+    if (detailedPhase) {
+      detailedPhase.span?.end()
+      detailedPhase.span = getTracer().startSpan(
+        BaseServerSpan.getIncrementalCache,
+        {
+          attributes: {
+            'next.span_name': 'get incremental cache',
+            'next.span_type': BaseServerSpan.getIncrementalCache,
+          },
+        }
+      )
+      detailedPhase.span.updateName('get incremental cache')
+    }
+
     const incrementalCache: import('./lib/incremental-cache').IncrementalCache =
       await this.getIncrementalCache({
         requestHeaders: Object.assign({}, req.headers),
       })
+
+    if (detailedPhase) {
+      detailedPhase.span?.end()
+      detailedPhase.span = getTracer().startSpan(
+        BaseServerSpan.resolvePrerendering,
+        {
+          attributes: {
+            'next.span_name': 'resolve prerendering',
+            'next.span_type': BaseServerSpan.resolvePrerendering,
+          },
+        }
+      )
+      detailedPhase.span.updateName('resolve prerendering')
+    }
 
     // TODO: investigate, this is not safe across multiple concurrent requests
     incrementalCache.resetRequestCache()
@@ -2445,6 +2574,20 @@ export default abstract class Server<
       return null
     }
 
+    if (detailedPhase) {
+      detailedPhase.span?.end()
+      detailedPhase.span = getTracer().startSpan(
+        BaseServerSpan.prepareRouteHandler,
+        {
+          attributes: {
+            'next.span_name': 'prepare route handler',
+            'next.span_type': BaseServerSpan.prepareRouteHandler,
+          },
+        }
+      )
+      detailedPhase.span.updateName('prepare route handler')
+    }
+
     const request = isNodeNextRequest(req) ? req.originalRequest : req
     const response = isNodeNextResponse(res) ? res.originalResponse : res
 
@@ -2508,9 +2651,22 @@ export default abstract class Server<
     // generic anyway.
     let handlerRes: HTTPServerResponse = response
 
-    await components.ComponentMod.handler(handlerReq, handlerRes, {
-      waitUntil: this.getWaitUntil(),
-    })
+    if (detailedPhase) {
+      detailedPhase.span?.end()
+      detailedPhase.span = undefined
+      await getTracer().trace(
+        BaseServerSpan.executeRouteHandler,
+        { spanName: 'execute route handler' },
+        () =>
+          components.ComponentMod.handler(handlerReq, handlerRes, {
+            waitUntil: this.getWaitUntil(),
+          })
+      )
+    } else {
+      await components.ComponentMod.handler(handlerReq, handlerRes, {
+        waitUntil: this.getWaitUntil(),
+      })
+    }
 
     // response is handled fully in handler
     return null
