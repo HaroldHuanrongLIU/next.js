@@ -9,6 +9,8 @@ import {
 const actionAsyncStorage =
   typeof window === 'undefined'
     ? (
+        // TODO(browser-variant): migrate to a .ts/.browser.ts split so the browser bundle drops the server branch; see scripts/generate-browser-variant-aliases.mjs
+        // ast-grep-ignore: no-typeof-window-require
         require('../../server/app-render/action-async-storage.external') as typeof import('../../server/app-render/action-async-storage.external')
       ).actionAsyncStorage
     : undefined

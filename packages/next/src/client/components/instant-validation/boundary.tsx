@@ -16,6 +16,8 @@ const {
   SlotMarker,
 } =
   typeof window === 'undefined' && process.env.__NEXT_CACHE_COMPONENTS
+    // TODO(browser-variant): migrate to a .ts/.browser.ts split so the browser bundle drops the server branch; see scripts/generate-browser-variant-aliases.mjs
+    // ast-grep-ignore: no-typeof-window-require-tsx
     ? (require('../../../server/app-render/instant-validation/boundary-impl') as typeof import('../../../server/app-render/instant-validation/boundary-impl'))
     : ({} as typeof import('../../../server/app-render/instant-validation/boundary-impl'))
 
