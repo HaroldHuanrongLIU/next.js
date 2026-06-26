@@ -3,6 +3,9 @@ valid:
   - "const mod = require('./mod')"
   - "const mod = cond ? require('./a') : require('./b')"
   - "const el = typeof window === 'undefined' ? <Server /> : <Browser />"
+  # `typeof window !== 'undefined'` requires a client module in the browser, not
+  # the server-leak direction this rule targets.
+  - "const x = typeof window !== 'undefined' ? require('./browser') : null"
 invalid:
   - "const x = typeof window === 'undefined' ? require('./server').x : undefined"
   - "if (typeof window === 'undefined') { const s = require('./server') }"

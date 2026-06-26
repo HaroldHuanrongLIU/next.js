@@ -6,14 +6,14 @@ snapshots:
       style: primary
       start: 50
       end: 69
-    - source: typeof window
+    - source: typeof window === 'undefined'
       style: secondary
       start: 10
-      end: 23
-    - source: typeof window
+      end: 39
+    - source: typeof window === 'undefined' && FLAG
       style: secondary
       start: 10
-      end: 23
+      end: 47
     - source: 'typeof window === ''undefined'' && FLAG ? require(''./server'').x : {}'
       style: secondary
       start: 10
@@ -24,14 +24,10 @@ snapshots:
       style: primary
       start: 42
       end: 61
-    - source: typeof window
+    - source: typeof window === 'undefined'
       style: secondary
       start: 10
-      end: 23
-    - source: typeof window
-      style: secondary
-      start: 10
-      end: 23
+      end: 39
     - source: 'typeof window === ''undefined'' ? require(''./server'').x : undefined'
       style: secondary
       start: 10
@@ -42,14 +38,14 @@ snapshots:
       style: primary
       start: 47
       end: 66
-    - source: typeof window
+    - source: typeof window === 'undefined'
       style: secondary
       start: 4
-      end: 17
-    - source: typeof window
+      end: 33
+    - source: (typeof window === 'undefined')
       style: secondary
-      start: 4
-      end: 17
+      start: 3
+      end: 34
     - source: if (typeof window === 'undefined') { const s = require('./server') }
       style: secondary
       start: 0
