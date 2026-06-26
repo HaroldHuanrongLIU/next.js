@@ -293,6 +293,7 @@ import { isInstantValidationError } from './instant-validation/instant-validatio
 import { createPromiseWithResolvers } from '../../shared/lib/promise-with-resolvers'
 import { RENDER_STAGES_BY_DATA_KIND } from '../dynamic-rendering-utils'
 import type { ValidationPrefetchKind } from './instant-validation/instant-validation'
+import { hasNonRootStaticParams } from '../lib/params-utils'
 
 export type GetDynamicParamFromSegment = (
   // The LoaderTree to extract the dynamic param from
@@ -4493,25 +4494,38 @@ async function prepareValidationInputs(
       requestStore,
       debugChannelClient: validationDebugChannel,
     }
+
     if (prefetchMode === PrefetchingMode.Partial) {
       if (navigationHasAppShell(navigationKind)) {
-        // This navigation has an accurate app shell, so we can use it for instant validation
-        // However, we don't have an accurate static shell, and need a secondary render.
+        // This navigation has an accurate app shell, so we can use it for instant validation.
         const instantInputs = inputsFromNavigation
 
-        // TODO(app-shells): try to avoid a second render if not needed
-        debug?.(
-          'reuse for instant validation, secondary render for static validation'
-        )
-        const staticInputs = await renderWithWarmCachesForStaticValidationInDev(
-          ctx,
-          createRequestStore,
-          getPayload,
-          onError,
-          prerenderResumeDataCache
-        )
-        if (forwardSyncInterruptOrDynamicUsageError(staticInputs, ctx)) {
-          return null
+        let staticInputs: DevValidationInputs
+        // If we have any non-root static params, then the static shell must have them in the static stage
+        // and can't be recovered from this render.
+        if (
+          hasNonRootStaticParams(
+            ctx.interpolatedParams,
+            requestStore.rootParams,
+            requestStore.fallbackParams
+          )
+        ) {
+          debug?.(
+            'reuse main render for instant validation, do secondary render for static validation'
+          )
+          staticInputs = await renderWithWarmCachesForStaticValidationInDev(
+            ctx,
+            createRequestStore,
+            getPayload,
+            onError,
+            prerenderResumeDataCache
+          )
+          if (forwardSyncInterruptOrDynamicUsageError(staticInputs, ctx)) {
+            return null
+          }
+        } else {
+          // If there's no non-root static params, then the static stage is usable for static validation.
+          staticInputs = instantInputs
         }
         return { instantInputs, staticInputs }
       } else {
@@ -4559,21 +4573,34 @@ async function prepareValidationInputs(
   )
   let staticInputs: DevValidationInputs
   if (prefetchMode === PrefetchingMode.Partial) {
-    debug?.(
-      'rerender for instant validation, secondary render for static validation'
-    )
-    // TODO(app-shells): try to avoid a second render if not needed
-    staticInputs = await renderWithWarmCachesForStaticValidationInDev(
-      ctx,
-      createRequestStore,
-      getPayload,
-      onError,
-      prerenderResumeDataCache
-    )
-    if (forwardSyncInterruptOrDynamicUsageError(staticInputs, ctx)) {
-      return null
+    // If we have any non-root static params, then the static shell must have them in the static stage
+    // and can't be recovered from this render.
+    // TODO(app-shells): this is the same block as the above, maybe restructure to dedupe?
+    if (
+      hasNonRootStaticParams(
+        ctx.interpolatedParams,
+        requestStore.rootParams,
+        requestStore.fallbackParams
+      )
+    ) {
+      debug?.(
+        'rerender instant validation, do secondary render for static validation'
+      )
+      staticInputs = await renderWithWarmCachesForStaticValidationInDev(
+        ctx,
+        createRequestStore,
+        getPayload,
+        onError,
+        prerenderResumeDataCache
+      )
+      if (forwardSyncInterruptOrDynamicUsageError(staticInputs, ctx)) {
+        return null
+      }
+    } else {
+      debug?.('rerender instant validation and static validation')
+      // If there's no non-root static params, then the static stage is usable for static validation.
+      staticInputs = instantInputs
     }
-    return { instantInputs, staticInputs }
   } else {
     debug?.('rerender for instant validation and static validation')
     // Not partialPrefetching. We use the same inputs for both Instant Validation and Static Shell Validation.
@@ -4742,6 +4769,8 @@ type StreamRevealStage =
   | RenderStage.Runtime
 
 function navigationHasAppShell(navigationKind: DevNavigationKind): boolean {
+  // TODO(app-shells): when we implement `<Link prefetch={true}>/`prefetch = "unstable_eager"` in dev,
+  // this might need to be adjusted, becase we'll use `Runtime` for the stage
   return (
     navigationKind.type === 'prefetched-client' &&
     navigationKind.prefetchStage === RenderStage.ShellRuntime
