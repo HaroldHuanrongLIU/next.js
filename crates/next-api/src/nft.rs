@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::Instrument;
 use turbo_rcstr::{RcStr, rcstr};
 use turbo_tasks::{
-    FxIndexMap, FxIndexSet, ReadRef, ResolvedVc, TryFlatJoinIterExt, TryJoinIterExt, Vc,
+    FxIndexMap, FxIndexSet, ReadRef, ResolvedVc, TraitRef, TryFlatJoinIterExt, TryJoinIterExt, Vc,
 };
 use turbo_tasks_fs::{
     DirectoryEntry, FileSystemPath,
@@ -23,6 +23,7 @@ use turbopack_core::{
     module::{Module, Modules},
     module_graph::{GraphTraversalAction, ModuleGraph},
     raw_module::RawModule,
+    reference::DynamicTraceReference,
 };
 
 use crate::project::Project;
@@ -335,14 +336,13 @@ pub async fn traced_modules_for_entries(
 
     for (parent, reference) in forbidden_issues {
         let reference = reference.into_trait_ref().await?;
-        ForbiddenTracedFileIssue::new(
-            parent.ident().await?.path.clone(),
-            reference.source(),
-            reference.origin_fn_name(),
-        )
-        .to_resolved()
-        .await?
-        .emit();
+        let source = reference.source();
+        let origin_fn_name = TraitRef::try_downcast::<Box<dyn DynamicTraceReference>>(reference)
+            .map(|traced| traced.origin_fn_name());
+        ForbiddenTracedFileIssue::new(parent.ident().await?.path.clone(), source, origin_fn_name)
+            .to_resolved()
+            .await?
+            .emit();
     }
 
     Ok(Vc::cell(traced_modules.into_iter().collect()))
@@ -491,27 +491,6 @@ impl Issue for ForbiddenTracedFileIssue {
     }
 
     async fn description(&self) -> Result<Option<StyledString>> {
-        // Render the fix as a snippet of the offending call when we know it (e.g.
-        // `fs.readFileSync(/*turbopackIgnore: true*/ ...)`) so the suggestion shows the
-        // exact placement on the highlighted call rather than a generic example.
-        let ignore_line = if let Some(fn_name) = &self.origin_fn_name {
-            StyledString::Line(vec![
-                StyledString::Text(rcstr!(
-                    "- opt out by adding an ignore comment to the highlighted call: "
-                )),
-                StyledString::Code(format!("{fn_name}(/*turbopackIgnore: true*/ ...)").into()),
-                StyledString::Text(rcstr!(", or")),
-            ])
-        } else {
-            StyledString::Line(vec![
-                StyledString::Text(rcstr!("- opt out by adding a ")),
-                StyledString::Code(rcstr!("/*turbopackIgnore: true*/")),
-                StyledString::Text(rcstr!(
-                    " comment before the first argument of the call highlighted above, or"
-                )),
-            ])
-        };
-
         let stack = vec![
             StyledString::Text(rcstr!(
                 "Static analysis determined that this filesystem access causes the whole project \
@@ -533,7 +512,19 @@ impl Issue for ForbiddenTracedFileIssue {
                 StyledString::Text(rcstr!(", or")),
             ]),
             StyledString::Text(rcstr!("- only use them in development, or")),
-            ignore_line,
+            StyledString::Line(vec![
+                StyledString::Text(rcstr!(
+                    "- opt out by adding an ignore comment to the highlighted call: "
+                )),
+                StyledString::Code(
+                    format!(
+                        "{fn_name}(/*turbopackIgnore: true*/ ...)",
+                        fn_name = self.origin_fn_name.as_deref().unwrap_or("someFsOperation")
+                    )
+                    .into(),
+                ),
+                StyledString::Text(rcstr!(", or")),
+            ]),
             StyledString::Text(rcstr!("- remove them.")),
         ];
         Ok(Some(StyledString::Stack(stack)))

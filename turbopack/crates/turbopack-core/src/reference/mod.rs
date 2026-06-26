@@ -44,14 +44,17 @@ pub trait ModuleReference: ValueToString {
     fn source(&self) -> Option<IssueSource> {
         None
     }
+}
 
+/// A [`ModuleReference`] created by tracing a dynamic filesystem access (e.g.
+/// `fs.readFileSync`, `path.join`) for the purpose of Node File Tracing.
+#[turbo_tasks::value_trait]
+pub trait DynamicTraceReference: ModuleReference {
     /// The name of the function/call that created this reference (e.g.
-    /// `fs.readFileSync`), if any. Used to name the offending call in tracing
+    /// `fs.readFileSync`). Used to name the offending call in tracing
     /// diagnostics so the suggested fix refers to the actual call rather than an
     /// example.
-    fn origin_fn_name(&self) -> Option<RcStr> {
-        None
-    }
+    fn origin_fn_name(&self) -> RcStr;
 }
 
 /// Multiple [ModuleReference]s

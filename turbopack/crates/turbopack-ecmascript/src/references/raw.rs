@@ -8,7 +8,7 @@ use turbopack_core::{
     file_source::FileSource,
     issue::IssueSource,
     raw_module::RawModule,
-    reference::ModuleReference,
+    reference::{DynamicTraceReference, ModuleReference},
     resolve::{
         ModuleResolveResult, RequestKey,
         pattern::{Pattern, PatternMatch, read_matches},
@@ -92,9 +92,12 @@ impl ModuleReference for FileSourceReference {
     fn source(&self) -> Option<IssueSource> {
         Some(self.issue_source)
     }
+}
 
-    fn origin_fn_name(&self) -> Option<RcStr> {
-        Some(self.origin_fn_name.clone())
+#[turbo_tasks::value_impl]
+impl DynamicTraceReference for FileSourceReference {
+    fn origin_fn_name(&self) -> RcStr {
+        self.origin_fn_name.clone()
     }
 }
 
@@ -235,8 +238,11 @@ impl ModuleReference for DirAssetReference {
     fn source(&self) -> Option<IssueSource> {
         Some(self.issue_source)
     }
+}
 
-    fn origin_fn_name(&self) -> Option<RcStr> {
-        Some(self.origin_fn_name.clone())
+#[turbo_tasks::value_impl]
+impl DynamicTraceReference for DirAssetReference {
+    fn origin_fn_name(&self) -> RcStr {
+        self.origin_fn_name.clone()
     }
 }
